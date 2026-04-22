@@ -1,4 +1,5 @@
 import { ASPECT_RATIO_DIMENSIONS } from "@/types/schema";
+import { getServerEnv } from "@/lib/env";
 import type {
   GenerateImageOptions,
   IImageProvider,
@@ -7,8 +8,29 @@ import type {
   ImageGenerationError,
 } from "@/services/interfaces";
 
-const POLLINATIONS_BASE = "https://image.pollinations.ai/prompt";
-const DEFAULT_TIMEOUT_MS = 30_000;
+interface PollinationsConfig {
+  baseUrl: string;
+  timeoutMs: number;
+}
+
+const FALLBACK_CONFIG: PollinationsConfig = {
+  baseUrl: "https://image.pollinations.ai/prompt",
+  timeoutMs: 30_000,
+};
+
+function safeGetEnv(): PollinationsConfig {
+  try {
+    const env = getServerEnv();
+    return {
+      baseUrl: env.POLLINATIONS_BASE_URL,
+      timeoutMs: env.POLLINATIONS_TIMEOUT_MS,
+    };
+  } catch {
+    // In unit tests or misconfigured dev environments we still want a usable
+    // provider; production will have validated env at boot time.
+    return FALLBACK_CONFIG;
+  }
+}
 
 /**
  * Pollinations AI free-tier provider.
@@ -20,6 +42,15 @@ const DEFAULT_TIMEOUT_MS = 30_000;
  */
 export class PollinationsProvider implements IImageProvider {
   public readonly providerName = "pollinations";
+  private readonly config: PollinationsConfig;
+
+  public constructor(config?: Partial<PollinationsConfig>) {
+    const env = safeGetEnv();
+    this.config = {
+      baseUrl: config?.baseUrl ?? env.baseUrl,
+      timeoutMs: config?.timeoutMs ?? env.timeoutMs,
+    };
+  }
 
   public async generateImage(
     prompt: string,
@@ -33,10 +64,10 @@ export class PollinationsProvider implements IImageProvider {
       nologo: "true",
       seed: String(seed),
     });
-    const url = `${POLLINATIONS_BASE}/${encodeURIComponent(prompt)}?${params.toString()}`;
+    const url = `${this.config.baseUrl}/${encodeURIComponent(prompt)}?${params.toString()}`;
 
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), DEFAULT_TIMEOUT_MS);
+    const timeout = setTimeout(() => controller.abort(), this.config.timeoutMs);
     const externalSignal = options.signal;
     const onExternalAbort = (): void => controller.abort();
     externalSignal?.addEventListener("abort", onExternalAbort);
